@@ -339,14 +339,14 @@ body{font-family:'Microsoft JhengHei','PingFang TC',Arial,sans-serif;background:
 <div class="page active" id="page-upload">
   <div class="upload-wrap">
     <h2>📂 載入年度檢驗紀錄表</h2>
-    <p>支援 2025成品檢驗紀錄表.xlsx 格式<br>每個品項一張工作表，自動解析所有數據</p>
+    <p>支援 2025/2026 成品檢驗紀錄表，中英文欄位自動識別<br>每個品項一張工作表，自動解析所有數據</p>
 
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
       <div class="icon">📊</div>
-      <p>點擊選取或拖曳 xlsx 檔案至此</p>
-      <small>2025成品檢驗紀錄表.xlsx</small>
+      <p>點擊選取或拖曳 xlsx / xlsm 檔案至此</p>
+      <small>支援 .xlsx、.xls、.xlsm 格式</small>
     </div>
-    <input type="file" id="file-input" accept=".xlsx,.xls">
+    <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm">
 
     <div class="upload-info" id="upload-info">
       <div class="fname" id="upload-fname"></div>
@@ -436,7 +436,7 @@ document.getElementById('file-input').addEventListener('change', e => handleFile
 
 function handleFile(file) {
   if (!file) return;
-  if (!file.name.match(/\.(xlsx|xls)$/i)) { alert('請選擇 .xlsx 或 .xls 檔案'); return; }
+  if (!file.name.match(/\.(xlsx|xls|xlsm)$/i)) { alert('請選擇 .xlsx、.xls 或 .xlsm 檔案'); return; }
   G.file = file;
   document.getElementById('upload-fname').textContent = '✅ ' + file.name;
   document.getElementById('upload-fmeta').textContent =
@@ -489,11 +489,14 @@ function parseSheet(sheetName, sheet) {
   const jData = XLSX.utils.sheet_to_json(sheet, { header:1, defval:null, raw:false });
   if (!jData || jData.length < 2) return null;
 
-  // --- 找標題列（含「製造日期」的那列）---
+  // --- 找標題列（含「製造日期」或「Manufacture Date」的那列）---
   let headerRowIdx = -1;
   for (let i = 0; i < Math.min(jData.length, 6); i++) {
     const row = jData[i];
-    if (row && row.some(c => c && String(c).includes('製造日期'))) {
+    if (row && row.some(c => c && (
+      String(c).includes('製造日期') ||
+      String(c).toLowerCase().includes('manufacture date')
+    ))) {
       headerRowIdx = i; break;
     }
   }
@@ -514,41 +517,43 @@ function parseSheet(sheetName, sheet) {
   // 特殊處理：糖度(成品) 必須排除含「半成品」的欄位
   function findBrixFP() {
     return headers.findIndex(h =>
-      (h.includes('糖度(成品)') || h.includes('糖度（成品）')) &&
-      !h.includes('半成品')
+      ((h.includes('糖度(成品)') || h.includes('糖度（成品）')) && !h.includes('半成品')) ||
+      (h.toLowerCase().includes('brix') && h.toLowerCase().includes('finish') && !h.toLowerCase().includes('semi'))
     );
   }
   // 特殊處理：黏度1/黏度2 必須排除「黏度(前)黏度(後)」混淆
   function findV1() {
-    // 優先找「黏度1」精確欄，再找「黏度(前)」
+    // 優先找「黏度1」精確欄，再找「黏度(前)」，再找英文 Viscosity 1
     let idx = headers.findIndex(h => h === '黏度1' || h.match(/^黏度1$/));
     if (idx < 0) idx = headers.findIndex(h => h.includes('黏度1') && !h.includes('黏度2'));
     if (idx < 0) idx = headers.findIndex(h => h.includes('黏度(前)'));
+    if (idx < 0) idx = headers.findIndex(h => /viscosity\s*1/i.test(h));
     return idx;
   }
   function findV2() {
     let idx = headers.findIndex(h => h === '黏度2' || h.match(/^黏度2$/));
     if (idx < 0) idx = headers.findIndex(h => h.includes('黏度2'));
     if (idx < 0) idx = headers.findIndex(h => h.includes('黏度(後)'));
+    if (idx < 0) idx = headers.findIndex(h => /viscosity\s*2/i.test(h));
     return idx;
   }
   const COL = {
-    mfgDate:  findCol('製造日期'),
-    expDate:  findCol('有效日期'),
-    insDate:  findCol('檢驗日期'),
-    brixHL:   findCol('半成品)低','半成品低','半成品）低'),
-    brixHH:   findCol('半成品)高','半成品高','半成品）高'),
+    mfgDate:  findCol('製造日期', 'Manufacture Date'),
+    expDate:  findCol('有效日期', 'Expiry Date'),
+    insDate:  findCol('檢驗日期', 'Test Date'),
+    brixHL:   findCol('半成品)低','半成品低','半成品）低', 'Semi-finish) Lower', 'Semi-finish Lower'),
+    brixHH:   findCol('半成品)高','半成品高','半成品）高', 'Semi-finish) Upper', 'Semi-finish Upper'),
     brixFP:   findBrixFP(),
     pH:       findCol('pH','PH'),
-    moisture: findCol('水分'),
-    spindle:  findCol('針號/轉速','針號'),
+    moisture: findCol('水分', 'Moisture'),
+    spindle:  findCol('針號/轉速','針號', 'Spindle'),
     v1:       findV1(),
     v2:       findV2(),
-    t1:       findCol('扭力矩1','扭力矩(前)'),
-    t2:       findCol('扭力矩2','扭力矩(後)'),
-    roomTemp: findCol('室內溫度'),
-    prodTemp: findCol('成品溫度'),
-    note:     findCol('備註'),
+    t1:       findCol('扭力矩1','扭力矩(前)', 'Torque 1'),
+    t2:       findCol('扭力矩2','扭力矩(後)', 'Torque 2'),
+    roomTemp: findCol('室內溫度', 'Room Temp'),
+    prodTemp: findCol('成品溫度', 'Product Temp'),
+    note:     findCol('備註', 'Note'),
   };
 
   // --- 從 A 欄抓黏度標準（上限/下限數值）---
@@ -668,7 +673,8 @@ function parseSheet(sheetName, sheet) {
   const rows = [];
   // 注意：只有 A欄是這些文字「且 B欄（製造日期欄）沒有日期」才跳過
   // 不能單純用 A欄關鍵字跳過，因為「上限」「下限」「37,000」那列同時有製造日期！
-  const skipKeywords = ['製造日期','有效日期','檢驗日期','黏度標準','暫時'];
+  const skipKeywords = ['製造日期','有效日期','檢驗日期','黏度標準','暫時',
+                        'Manufacture Date','Expiry Date','Test Date','Batch No.'];
 
   for (let i = headerRowIdx + 1; i < jData.length; i++) {
     const row = jData[i];
